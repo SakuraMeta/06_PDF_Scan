@@ -1,0 +1,14 @@
+# PDF Renamer Configuration File
+pdf_input_folder=pdf_input
+pdf_output_folder=pdf_output
+log_output_folder=log_output
+ocr_image_folder=ocr_get_image
+
+# OCR Area Coordinates (x, y, width, height)
+ocr_x=600
+ocr_y=250
+ocr_width=300
+ocr_height=50
+
+# Target digit length
+digit_length=8
