@@ -1,14 +1,17 @@
 # PDF Renamer Configuration File
-pdf_input_folder=pdf_input
+pdf_input_folder=D:/開発/06_PDF_Scan/dist/pdf_input
 pdf_output_folder=pdf_output
 log_output_folder=log_output
 ocr_image_folder=ocr_get_image
 
-# OCR Area Coordinates (x, y, width, height)
-ocr_x=600
-ocr_y=250
-ocr_width=300
-ocr_height=50
+# Red Frame Coordinates (Center Display Area)
+red_frame_x=81
+red_frame_y=50
+red_frame_width=309
+red_frame_height=190
 
-# Target digit length
-digit_length=8
+# Blue Frame Coordinates (Right Display Area)
+blue_frame_x=474
+blue_frame_y=154
+blue_frame_width=287
+blue_frame_height=399

@@ -19,15 +19,15 @@ class PDFRenamerApp:
         # Configuration
         self.config = self.load_config()
         
-        # Variables
+        # Variables - 新仕様対応
         self.pdf_files = []
         self.current_pdf_index = 0
         self.current_pdf_doc = None
-        self.ocr_area = None
-        self.selecting_area = False
+        self.selecting_area = False  # 'center' or 'right' or False
         self.start_x = 0
         self.start_y = 0
         self.rect_id = None
+        self.current_selection_color = 'red'  # デフォルトの枠線色
         
         # Create folders
         self.create_folders()
@@ -46,22 +46,29 @@ class PDFRenamerApp:
                 for line in f:
                     if line.strip() and not line.startswith('#'):
                         key, value = line.strip().split('=', 1)
-                        if key in ['ocr_x', 'ocr_y', 'ocr_width', 'ocr_height', 'digit_length']:
+                        # 数値項目の定義を新仕様に対応
+                        if key in ['red_frame_x', 'red_frame_y', 'red_frame_width', 'red_frame_height',
+                                  'blue_frame_x', 'blue_frame_y', 'blue_frame_width', 'blue_frame_height']:
                             config[key] = int(value)
                         else:
                             config[key] = value
         except FileNotFoundError:
-            # Default configuration
+            # Default configuration - 新仕様対応
             config = {
                 'pdf_input_folder': 'pdf_input',
                 'pdf_output_folder': 'pdf_output',
                 'log_output_folder': 'log_output',
                 'ocr_image_folder': 'ocr_get_image',
-                'ocr_x': 600,
-                'ocr_y': 250,
-                'ocr_width': 300,
-                'ocr_height': 50,
-                'digit_length': 8
+                # 赤枠（中央表示用）の座標
+                'red_frame_x': 600,
+                'red_frame_y': 250,
+                'red_frame_width': 300,
+                'red_frame_height': 200,
+                # 青枠（右側表示用）の座標
+                'blue_frame_x': 400,
+                'blue_frame_y': 350,
+                'blue_frame_width': 250,
+                'blue_frame_height': 150
             }
         return config
     
@@ -73,13 +80,16 @@ class PDFRenamerApp:
             f.write(f"pdf_output_folder={self.config['pdf_output_folder']}\n")
             f.write(f"log_output_folder={self.config['log_output_folder']}\n")
             f.write(f"ocr_image_folder={self.config['ocr_image_folder']}\n")
-            f.write("\n# OCR Area Coordinates (x, y, width, height)\n")
-            f.write(f"ocr_x={self.config['ocr_x']}\n")
-            f.write(f"ocr_y={self.config['ocr_y']}\n")
-            f.write(f"ocr_width={self.config['ocr_width']}\n")
-            f.write(f"ocr_height={self.config['ocr_height']}\n")
-            f.write("\n# Target digit length\n")
-            f.write(f"digit_length={self.config['digit_length']}\n")
+            f.write("\n# Red Frame Coordinates (Center Display Area)\n")
+            f.write(f"red_frame_x={self.config.get('red_frame_x', 600)}\n")
+            f.write(f"red_frame_y={self.config.get('red_frame_y', 250)}\n")
+            f.write(f"red_frame_width={self.config.get('red_frame_width', 300)}\n")
+            f.write(f"red_frame_height={self.config.get('red_frame_height', 200)}\n")
+            f.write("\n# Blue Frame Coordinates (Right Display Area)\n")
+            f.write(f"blue_frame_x={self.config.get('blue_frame_x', 400)}\n")
+            f.write(f"blue_frame_y={self.config.get('blue_frame_y', 350)}\n")
+            f.write(f"blue_frame_width={self.config.get('blue_frame_width', 250)}\n")
+            f.write(f"blue_frame_height={self.config.get('blue_frame_height', 150)}\n")
     
     def create_folders(self):
         """Create necessary folders"""
@@ -106,7 +116,7 @@ class PDFRenamerApp:
                 break
     
     def setup_ui(self):
-        """Setup the user interface"""
+        """Setup the user interface - 新仕様3分割レイアウト"""
         # Main frame
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -115,20 +125,15 @@ class PDFRenamerApp:
         top_frame = ttk.Frame(main_frame)
         top_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Control buttons
-        btn_font = ('Arial', 16)
-        
+        # 入力フォルダ選択ボタン（左端）
         ttk.Button(top_frame, text="入力フォルダ選択", command=self.select_input_folder, 
                   style='Large.TButton').pack(side=tk.LEFT, padx=(0, 10))
         
-        ttk.Button(top_frame, text="OCR範囲を設定", command=self.set_ocr_area, 
-                  style='Large.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Middle frame for PDF and OCR display
+        # Middle frame for 3-column layout (1:1:1)
         middle_frame = ttk.Frame(main_frame)
         middle_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        # Left frame for PDF viewer (50% width)
+        # === 左側: PDFビューワ (1/3) ===
         left_frame = ttk.Frame(middle_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         
@@ -139,42 +144,41 @@ class PDFRenamerApp:
         self.pdf_canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.pdf_canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
         
-        # Right frame (50% width)
+        # === 中央: 表示画像（中） (1/3) ===
+        center_frame = ttk.Frame(middle_frame)
+        center_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 5))
+        
+        # 表示画像を設定（中）ボタン
+        center_btn_frame = ttk.Frame(center_frame)
+        center_btn_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(center_btn_frame, text="表示画像を設定（中）", command=self.set_center_area, 
+                  style='Large.TButton').pack(side=tk.LEFT)
+        
+        # 中央表示エリア
+        center_display_frame = ttk.LabelFrame(center_frame, text="表示画像（中）")
+        center_display_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.center_canvas = tk.Canvas(center_display_frame, bg='lightgray', relief=tk.SUNKEN, bd=2)
+        self.center_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # === 右側: 表示画像（右） (1/3) ===
         right_frame = ttk.Frame(middle_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
         
-        # OCR Image frame (6/7 of right frame height)
-        ocr_frame = ttk.LabelFrame(right_frame, text="OCRイメージ")
-        ocr_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
-        
-        self.ocr_canvas = tk.Canvas(ocr_frame, bg='white', relief=tk.SUNKEN, bd=2)
-        self.ocr_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Future use frame (1/7 of right frame height)
-        future_frame = ttk.LabelFrame(right_frame, text="後ほど使用するエリア")
-        future_frame.pack(fill=tk.X, pady=(5, 0))
-        future_frame.configure(height=80)
-        future_frame.pack_propagate(False)
-        
-        # Center frame for filename input
-        center_frame = ttk.Frame(main_frame)
-        center_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Filename input section (centered)
-        filename_frame = ttk.Frame(center_frame)
-        filename_frame.pack(anchor=tk.CENTER)
-        
-        ttk.Label(filename_frame, text="ファイル名", font=('Arial', 16)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Text entry with validation for 8 digits, but wider display
-        vcmd = (self.root.register(self.validate_input), '%P')
-        self.filename_entry = ttk.Entry(filename_frame, font=('Arial', 16), width=16, validate='key', validatecommand=vcmd)
-        self.filename_entry.pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(filename_frame, text="名前を付けて保存", command=self.save_file, 
+        # 表示画像を設定（右）ボタン
+        right_btn_frame = ttk.Frame(right_frame)
+        right_btn_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(right_btn_frame, text="表示画像を設定（右）", command=self.set_right_area, 
                   style='Large.TButton').pack(side=tk.LEFT)
         
-        # Navigation frame
+        # 右側表示エリア
+        right_display_frame = ttk.LabelFrame(right_frame, text="表示画像（右）")
+        right_display_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.right_canvas = tk.Canvas(right_display_frame, bg='lightgray', relief=tk.SUNKEN, bd=2)
+        self.right_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Navigation frame - 簡素化
         nav_frame = ttk.Frame(main_frame)
         nav_frame.pack(fill=tk.X, pady=(0, 10))
         
@@ -247,6 +251,16 @@ class PDFRenamerApp:
     
     def load_current_pdf(self):
         """Load and display current PDF"""
+        # ocr_get_imageフォルダ内のpngファイルを削除
+        ocr_folder = self.config.get('ocr_image_folder')
+        if ocr_folder and os.path.isdir(ocr_folder):
+            for filename in os.listdir(ocr_folder):
+                if filename.lower().endswith('.png'):
+                    try:
+                        os.remove(os.path.join(ocr_folder, filename))
+                    except Exception as e:
+                        self.log_message(f"PNGファイル削除エラー: {e}")
+
         if not self.pdf_files:
             return
         
@@ -285,14 +299,14 @@ class PDFRenamerApp:
             self.pdf_canvas.delete("all")
             self.pdf_canvas.create_image(canvas_width//2, canvas_height//2, image=self.pdf_image)
             
-            # Draw OCR area rectangle
-            self.draw_ocr_rectangle()
+            # Draw red and blue frames
+            self.draw_frames()
             
             # Update file info
             self.update_file_info()
             
-            # Extract OCR text
-            self.extract_ocr_text()
+            # Update display images
+            self.update_display_images()
             
             self.log_message(f"PDFを読み込みました: {self.pdf_files[self.current_pdf_index]}")
             
@@ -481,22 +495,22 @@ class PDFRenamerApp:
     def on_canvas_drag(self, event):
         """Handle canvas drag for area selection"""
         if self.selecting_area:
-            # Remove previous rectangle
-            self.pdf_canvas.delete("selection_rect")
-            
-            # Draw new rectangle
+            if hasattr(self, 'rect_id') and self.rect_id:
+                self.pdf_canvas.delete(self.rect_id)
+
             self.rect_id = self.pdf_canvas.create_rectangle(
                 self.start_x, self.start_y, event.x, event.y,
-                outline='red', width=2, tags="selection_rect"
+                outline=self.current_selection_color, width=2, tags="selection_rect"
             )
     
     def on_canvas_release(self, event):
-        """Handle canvas release for area selection"""
-        if self.selecting_area:
+        """Handle canvas release for area selection - 新仕様対応"""
+        if hasattr(self, 'selecting_area') and self.selecting_area:
+            area_type = self.selecting_area
             self.selecting_area = False
             self.pdf_canvas.config(cursor="")
             
-            # Calculate OCR area coordinates
+            # Calculate area coordinates
             canvas_width = self.pdf_canvas.winfo_width()
             canvas_height = self.pdf_canvas.winfo_height()
             
@@ -510,23 +524,29 @@ class PDFRenamerApp:
                 x2 = max(self.start_x, event.x) * scale_x
                 y2 = max(self.start_y, event.y) * scale_y
                 
-                # Update configuration
-                self.config['ocr_x'] = int(x1)
-                self.config['ocr_y'] = int(y1)
-                self.config['ocr_width'] = int(x2 - x1)
-                self.config['ocr_height'] = int(y2 - y1)
+                # Update configuration based on area type
+                if area_type == 'center':
+                    self.config['red_frame_x'] = int(x1)
+                    self.config['red_frame_y'] = int(y1)
+                    self.config['red_frame_width'] = int(x2 - x1)
+                    self.config['red_frame_height'] = int(y2 - y1)
+                    self.log_message(f"中央表示エリア（赤枠）を更新: ({int(x1)}, {int(y1)}, {int(x2-x1)}, {int(y2-y1)})")
+                elif area_type == 'right':
+                    self.config['blue_frame_x'] = int(x1)
+                    self.config['blue_frame_y'] = int(y1)
+                    self.config['blue_frame_width'] = int(x2 - x1)
+                    self.config['blue_frame_height'] = int(y2 - y1)
+                    self.log_message(f"右側表示エリア（青枠）を更新: ({int(x1)}, {int(y1)}, {int(x2-x1)}, {int(y2-y1)})")
                 
                 # Save configuration
                 self.save_config()
                 
-                # Redraw OCR rectangle
+                # Redraw frames
                 self.pdf_canvas.delete("selection_rect")
-                self.draw_ocr_rectangle()
+                self.draw_frames()
                 
-                # Re-extract OCR text
-                self.extract_ocr_text()
-                
-                self.log_message(f"OCR範囲を更新しました: ({self.config['ocr_x']}, {self.config['ocr_y']}, {self.config['ocr_width']}, {self.config['ocr_height']})")
+                # Update display images
+                self.update_display_images()
     
     def save_file(self):
         """Save current PDF with new filename"""
@@ -568,8 +588,7 @@ class PDFRenamerApp:
         log_file = os.path.join(self.config['log_output_folder'], f"{today}.txt")
         
         with open(log_file, 'a', encoding='utf-8') as f:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            f.write(f"[{timestamp}] {original_filename} -> {new_filename}.pdf\n")
+            f.write(f"{new_filename}\n")
     
     def prev_pdf(self):
         """Go to previous PDF"""
@@ -584,6 +603,113 @@ class PDFRenamerApp:
             self.load_current_pdf()
         elif self.pdf_files and self.current_pdf_index == len(self.pdf_files) - 1:
             messagebox.showinfo("完了", "全てのPDFファイルの処理が完了しました")
+    
+    # === 新仕様対応メソッド ===
+    def set_center_area(self):
+        """Set center display area (red frame)"""
+        self.selecting_area = 'center'
+        self.current_selection_color = 'red'
+        self.pdf_canvas.config(cursor="crosshair")
+        self.log_message("中央表示エリアを設定してください（赤枠をドラッグ）")
+    
+    def set_right_area(self):
+        """Set right display area (blue frame)"""
+        self.selecting_area = 'right'
+        self.current_selection_color = 'blue'
+        self.pdf_canvas.config(cursor="crosshair")
+        self.log_message("右側表示エリアを設定してください（青枠をドラッグ）")
+    
+    def draw_frames(self):
+        """Draw red and blue frames on PDF canvas"""
+        if hasattr(self, 'pdf_image'):
+            # 古い枠を全て削除
+            self.pdf_canvas.delete('red_frame')
+            self.pdf_canvas.delete('blue_frame')
+            
+            canvas_width = self.pdf_canvas.winfo_width()
+            canvas_height = self.pdf_canvas.winfo_height()
+            
+            # Scale coordinates to canvas coordinates
+            scale_x = canvas_width / (self.pdf_image.width() * 2)  # *2 because we show left half
+            scale_y = canvas_height / self.pdf_image.height()
+            
+            # Draw red frame (center area)
+            if all(key in self.config for key in ['red_frame_x', 'red_frame_y', 'red_frame_width', 'red_frame_height']):
+                x1 = self.config['red_frame_x'] * scale_x
+                y1 = self.config['red_frame_y'] * scale_y
+                x2 = (self.config['red_frame_x'] + self.config['red_frame_width']) * scale_x
+                y2 = (self.config['red_frame_y'] + self.config['red_frame_height']) * scale_y
+                self.pdf_canvas.create_rectangle(x1, y1, x2, y2, outline='red', width=3, tags='red_frame')
+            
+            # Draw blue frame (right area)
+            if all(key in self.config for key in ['blue_frame_x', 'blue_frame_y', 'blue_frame_width', 'blue_frame_height']):
+                x1 = self.config['blue_frame_x'] * scale_x
+                y1 = self.config['blue_frame_y'] * scale_y
+                x2 = (self.config['blue_frame_x'] + self.config['blue_frame_width']) * scale_x
+                y2 = (self.config['blue_frame_y'] + self.config['blue_frame_height']) * scale_y
+                self.pdf_canvas.create_rectangle(x1, y1, x2, y2, outline='blue', width=3, tags='blue_frame')
+    
+    def update_display_images(self):
+        """Update center and right display images based on frame areas"""
+        if not self.current_pdf_doc:
+            return
+        
+        try:
+            page = self.current_pdf_doc[0]
+            
+            # Update center display (red frame area)
+            if all(key in self.config for key in ['red_frame_x', 'red_frame_y', 'red_frame_width', 'red_frame_height']):
+                self.extract_and_display_area('center', 
+                    self.config['red_frame_x'], self.config['red_frame_y'],
+                    self.config['red_frame_width'], self.config['red_frame_height'])
+            
+            # Update right display (blue frame area)
+            if all(key in self.config for key in ['blue_frame_x', 'blue_frame_y', 'blue_frame_width', 'blue_frame_height']):
+                self.extract_and_display_area('right',
+                    self.config['blue_frame_x'], self.config['blue_frame_y'],
+                    self.config['blue_frame_width'], self.config['blue_frame_height'])
+                    
+        except Exception as e:
+            self.log_message(f"画像表示エラー: {str(e)}")
+    
+    def extract_and_display_area(self, area_type, x, y, width, height):
+        """Extract and display image from specified area"""
+        try:
+            page = self.current_pdf_doc[0]
+            
+            # Define area rectangle
+            rect = fitz.Rect(x, y, x + width, y + height)
+            
+            # Extract image from area
+            mat = fitz.Matrix(2.0, 2.0)  # Scale factor
+            pix = page.get_pixmap(matrix=mat, clip=rect)
+            img_data = pix.tobytes("ppm")
+            
+            # Convert to PIL Image
+            pil_image = Image.open(io.BytesIO(img_data))
+            
+            # Get target canvas
+            target_canvas = self.center_canvas if area_type == 'center' else self.right_canvas
+            
+            # Resize to fit canvas
+            canvas_width = target_canvas.winfo_width()
+            canvas_height = target_canvas.winfo_height()
+            
+            if canvas_width > 1 and canvas_height > 1:
+                pil_image.thumbnail((canvas_width, canvas_height), Image.Resampling.LANCZOS)
+            
+            # Convert to PhotoImage and display
+            if area_type == 'center':
+                self.center_image = ImageTk.PhotoImage(pil_image)
+                self.center_canvas.delete("all")
+                self.center_canvas.create_image(canvas_width//2, canvas_height//2, image=self.center_image)
+            else:
+                self.right_image = ImageTk.PhotoImage(pil_image)
+                self.right_canvas.delete("all")
+                self.right_canvas.create_image(canvas_width//2, canvas_height//2, image=self.right_image)
+                
+        except Exception as e:
+            self.log_message(f"{area_type}エリア画像抽出エラー: {str(e)}")
 
 if __name__ == "__main__":
     import io
