@@ -5,13 +5,13 @@ log_output_folder=log_output
 ocr_image_folder=ocr_get_image
 
 # Red Frame Coordinates (Center Display Area)
-red_frame_x=81
-red_frame_y=50
-red_frame_width=309
-red_frame_height=190
+red_frame_x=26
+red_frame_y=180
+red_frame_width=236
+red_frame_height=82
 
 # Blue Frame Coordinates (Right Display Area)
-blue_frame_x=474
-blue_frame_y=154
-blue_frame_width=287
-blue_frame_height=399
+blue_frame_x=420
+blue_frame_y=102
+blue_frame_width=155
+blue_frame_height=397
