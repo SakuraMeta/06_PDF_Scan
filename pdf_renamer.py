@@ -10,6 +10,7 @@ import shutil
 from datetime import datetime
 import re
 import io
+import csv
 
 class PDFRenamerApp:
     def __init__(self, root):
@@ -36,9 +37,43 @@ class PDFRenamerApp:
         
         # Create folders
         self.create_folders()
-        
+
+        # Prepare per-run CSV log file name (YYYYMMDD_hhmmss.csv)
+        try:
+            ts_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".csv"
+            log_dir = self.config.get('log_output_folder') or 'log_output'
+            os.makedirs(log_dir, exist_ok=True)
+            self.current_csv_path = os.path.join(log_dir, ts_name)
+            # 実行ごとに新規CSVファイルを作成（空ファイル）
+            try:
+                with open(self.current_csv_path, 'w', encoding='utf-8', newline='') as f:
+                    pass
+            except Exception as e:
+                # UI未初期化のためprintに留める
+                print(f"CSV初期作成エラー: {e}")
+        except Exception as e:
+            # フォールバック: 既定log_output直下にタイムスタンプ名で作成を試行
+            try:
+                ts_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".csv"
+                log_dir = 'log_output'
+                os.makedirs(log_dir, exist_ok=True)
+                self.current_csv_path = os.path.join(log_dir, ts_name)
+                with open(self.current_csv_path, 'w', encoding='utf-8', newline='') as f:
+                    pass
+                # UI未初期化のためprintに留める
+                print(f"CSVログフォールバック作成: {self.current_csv_path}")
+            except Exception as e2:
+                # 最終手段: メモリ上のパス（起動後の保存時に例外で通知）
+                self.current_csv_path = os.path.join(os.getcwd(), ts_name)
+                print(f"CSV作成に失敗しました: {e2}")
+
         # Setup UI
         self.setup_ui()
+        # UI準備後にログ出力
+        try:
+            self.log_message(f"CSVログファイル: {self.current_csv_path}")
+        except Exception:
+            pass
         
         # Setup Tesseract path
         self.setup_tesseract()
@@ -193,12 +228,14 @@ class PDFRenamerApp:
         self.id_entry.grid(row=0, column=0, sticky='we', padx=(10, 10), pady=10)
         # 起動時に入力フォーカスをテキストボックスへ
         self.root.after(200, lambda: (self.id_entry.focus_set(), self.id_entry.icursor(tk.END)))
+        # フォーカスが当たったら仮表示のキー値を初期化
+        self.id_entry.bind('<FocusIn>', self.on_entry_focus_in)
 
         self.display_button = ttk.Button(center_bottom_controls, text="表示", command=self.on_display_click, style='Large.TButton', width=10)
         self.display_button.grid(row=0, column=1, padx=(0, 10), pady=10)
-        # フォーカス移動（Enterキー）: Entry -> 表示 -> 保存 -> Entry
+        # フォーカス移動（Enterキー）: Entry -> 表示(実行) -> 保存(可能なら) / 不可なら Entry
         self.id_entry.bind('<Return>', lambda e: (self.display_button.focus_set(), 'break'))
-        self.display_button.bind('<Return>', lambda e: (self.save_button.focus_set(), 'break'))
+        self.display_button.bind('<Return>', self.on_display_enter)
         
         # === 右側: 表示画像（右） (1/3) ===
         right_frame = ttk.Frame(middle_frame)
@@ -230,7 +267,17 @@ class PDFRenamerApp:
         
         self.save_button = ttk.Button(right_bottom_area, text="保存", command=self.on_save_click, style='Large.TButton', width=10)
         self.save_button.grid(row=0, column=1, sticky='e', padx=(0, 10), pady=10)
-        self.save_button.bind('<Return>', lambda e: (self.id_entry.focus_set(), 'break'))
+        # 保存(実行) -> 次のPDFへ -> Entryへフォーカス
+        self.save_button.bind('<Return>', self.on_save_enter)
+        # 保存ボタンの有効/無効はテキストボックスの8桁数字入力で制御
+        # Entry の変更をフック
+        try:
+            self.entry_var.trace_add('write', self.update_save_button_state)
+        except Exception:
+            # 古いTkの場合の互換（trace）
+            self.entry_var.trace('w', self.update_save_button_state)
+        # 初期状態を反映（起動直後は無効が基本）
+        self.update_save_button_state()
         
         # Navigation frame - 左右端寄せ + 中央にファイル情報
         nav_frame = ttk.Frame(main_frame)
@@ -285,6 +332,49 @@ class PDFRenamerApp:
             return True
         return False
     
+    def update_save_button_state(self, *_, **__):
+        """Enable Save button only when Entry has exactly 8 digits."""
+        try:
+            value = self.entry_var.get().strip()
+            if len(value) == 8 and value.isdigit():
+                # enable
+                try:
+                    self.save_button.state(['!disabled'])
+                except Exception:
+                    self.save_button.configure(state='normal')
+                # Tab移動対象に含める
+                try:
+                    self.save_button.configure(takefocus=1)
+                except Exception:
+                    pass
+            else:
+                # disable
+                try:
+                    self.save_button.state(['disabled'])
+                except Exception:
+                    self.save_button.configure(state='disabled')
+                # Tab移動対象から除外
+                try:
+                    self.save_button.configure(takefocus=0)
+                except Exception:
+                    pass
+                # もし現在フォーカスが保存ボタンならエントリへ戻す
+                try:
+                    if str(self.root.focus_get()) == str(self.save_button):
+                        self.id_entry.focus_set()
+                except Exception:
+                    pass
+        except Exception:
+            # Fallback: keep disabled on any unexpected error
+            try:
+                self.save_button.state(['disabled'])
+            except Exception:
+                self.save_button.configure(state='disabled')
+            try:
+                self.save_button.configure(takefocus=0)
+            except Exception:
+                pass
+    
     def on_display_click(self):
         """Handle display button click next to the Entry"""
         value = self.entry_var.get().strip()
@@ -296,12 +386,242 @@ class PDFRenamerApp:
                 self.result_var.set(f"キー {value} の検索結果（仮表示）")
         else:
             self.log_message("8桁の半角数字を入力してください。")
+
+    def on_entry_focus_in(self, event=None):
+        """When Entry gets focus, clear the placeholder key display."""
+        try:
+            if hasattr(self, 'result_var') and self.result_var is not None:
+                self.result_var.set("")
+        except Exception:
+            pass
+
+    def on_display_enter(self, event=None):
+        """Enter on Display: run display action, then move focus to Save if enabled, otherwise back to Entry."""
+        try:
+            self.on_display_click()
+            # 直後の状態で保存可能かを判断
+            self.update_save_button_state()
+            try:
+                state = self.save_button.state()
+            except Exception:
+                # Fallback for non-ttk state retrieval
+                state = [] if str(self.save_button.cget('state')) == 'normal' else ['disabled']
+            if 'disabled' not in state:
+                self.save_button.focus_set()
+            else:
+                self.id_entry.focus_set()
+        except Exception:
+            # 何かあればエントリへ戻す
+            try:
+                self.id_entry.focus_set()
+            except Exception:
+                pass
+        return 'break'
     
     def on_save_click(self):
-        """Handle save button click (to be defined later)"""
-        current = getattr(self, 'result_var', None)
-        msg = current.get() if current else ""
-        self.log_message(f"保存ボタン: 現在の内容を保存予定（実装待ち） -> {msg}")
+        """Copy the currently viewed PDF to output folder with Entry value as filename."""
+        # 1) Validate entry
+        value = self.entry_var.get().strip() if hasattr(self, 'entry_var') else ""
+        if not (len(value) == 8 and value.isdigit()):
+            messagebox.showwarning("入力エラー", "8桁の半角数字を入力してください。")
+            self.update_save_button_state()
+            return
+
+        # 2) Resolve current PDF path
+        if not self.pdf_files:
+            self.log_message("保存失敗: 表示中のPDFがありません。")
+            messagebox.showerror("エラー", "表示中のPDFがありません。")
+            return
+        try:
+            src_pdf = os.path.join(self.config.get('pdf_input_folder', ''), self.pdf_files[self.current_pdf_index])
+        except Exception:
+            src_pdf = None
+
+        if not src_pdf or not os.path.isfile(src_pdf):
+            self.log_message("保存失敗: 元PDFが見つかりません。")
+            messagebox.showerror("エラー", "元PDFが見つかりません。")
+            return
+
+        # 3) Prepare destination path
+        output_dir = self.config.get('pdf_output_folder') or 'pdf_output'
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception as e:
+            self.log_message(f"保存失敗: 出力フォルダ作成エラー: {e}")
+            messagebox.showerror("エラー", f"出力フォルダの作成に失敗しました:\n{e}")
+            return
+
+        dest_pdf = os.path.join(output_dir, f"{value}.pdf")
+
+        # 3.5) 現在ページに既存レコードがあるか確認（あれば更新モード）
+        page_no = self.current_pdf_index + 1
+        existing_row = self.get_csv_row_by_index(page_no)
+        old_value_in_csv = None
+        old_seq = None
+        if existing_row:
+            try:
+                old_value_in_csv = existing_row[0] if len(existing_row) >= 1 else None
+            except Exception:
+                old_value_in_csv = None
+            try:
+                old_seq = int(existing_row[-1])
+            except Exception:
+                old_seq = None
+
+        # 4) Overwrite confirmation if exists
+        # 既存レコードがあり、旧ファイル名→新ファイル名の置換を行うモードでは確認ダイアログなしで実施
+        if not existing_row:
+            if os.path.exists(dest_pdf):
+                if not messagebox.askyesno("上書き確認", f"既に存在します:\n{dest_pdf}\n上書きしますか？"):
+                    self.log_message("保存をキャンセルしました（上書きしない）。")
+                    return
+
+        # 5) Copy / Replace
+        try:
+             # 旧PDFの削除（既存レコードがあり、旧値が存在し、新値と異なる場合）
+            if existing_row and old_value_in_csv and old_value_in_csv != value:
+                old_pdf_path = os.path.join(output_dir, f"{old_value_in_csv}.pdf")
+                if os.path.exists(old_pdf_path):
+                    try:
+                        os.remove(old_pdf_path)
+                        self.log_message(f"旧PDFを削除しました: {old_pdf_path}")
+                    except Exception as de:
+                        self.log_message(f"旧PDF削除エラー: {de}")
+            shutil.copy2(src_pdf, dest_pdf)
+            self.log_message(f"保存完了: {dest_pdf}")
+            messagebox.showinfo("保存完了", f"保存しました:\n{dest_pdf}")
+            # CSV: 既存レコードがあればその行を更新、なければ追記
+            try:
+                placeholder = ""
+                try:
+                    if hasattr(self, 'result_var') and self.result_var is not None:
+                        placeholder = self.result_var.get()
+                except Exception:
+                    placeholder = ""
+                if existing_row:
+                    self.update_csv_row_by_index(page_no, value, placeholder, keep_seq=old_seq)
+                else:
+                    self.append_csv_log(value, placeholder)
+            except Exception as e:
+                self.log_message(f"CSVログ出力エラー: {e}")
+            # 入力欄を初期化し、ボタン状態を更新
+            try:
+                self.entry_var.set("")
+            except Exception:
+                pass
+            try:
+                self.update_save_button_state()
+            except Exception:
+                pass
+        except Exception as e:
+            self.log_message(f"保存失敗: コピー中にエラー: {e}")
+            messagebox.showerror("エラー", f"コピーに失敗しました:\n{e}")
+
+    def append_csv_log(self, key_value: str, placeholder_text: str):
+        """Append a CSV row 'key_value, placeholder_text, seq' into log_output/rename_log.csv with sequential numbering."""
+        log_dir = self.config.get('log_output_folder') or 'log_output'
+        os.makedirs(log_dir, exist_ok=True)
+        csv_path = self.current_csv_path
+
+        # Determine next sequence number by reading last valid row
+        next_seq = 1
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+                    reader = csv.reader(f)
+                    last_seq = 0
+                    for row in reader:
+                        if not row:
+                            continue
+                        try:
+                            # Use the last column as seq to support both 2-col and 3-col historical formats
+                            last_seq = int(row[-1])
+                        except Exception:
+                            continue
+                    next_seq = last_seq + 1 if last_seq >= 0 else 1
+            except Exception as e:
+                # 読み取り失敗時は1から（新規扱い）
+                self.log_message(f"CSV読み込みエラー: {e} -> 連番を1から開始します")
+                next_seq = 1
+
+        # Append new row
+        with open(csv_path, 'a', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([key_value, placeholder_text, next_seq])
+        self.log_message(f"CSV出力: {csv_path} に {key_value},{placeholder_text},{next_seq} を追記")
+
+    def get_csv_row_by_index(self, index_1based: int):
+        """Return the row (list[str]) at 1-based index from the current CSV file if exists, else None."""
+        try:
+            log_dir = self.config.get('log_output_folder') or 'log_output'
+            csv_path = self.current_csv_path
+            if not os.path.exists(csv_path):
+                return None
+            with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+                reader = csv.reader(f)
+                for i, row in enumerate(reader, start=1):
+                    if i == index_1based:
+                        return row
+            return None
+        except Exception as e:
+            self.log_message(f"CSV読み込みエラー(get_csv_row_by_index): {e}")
+            return None
+
+    def update_csv_row_by_index(self, index_1based: int, key_value: str, placeholder_text: str, keep_seq: int | None = None):
+        """Update a specific 1-based row in the current CSV with new values while preserving sequence if provided.
+        If the index is beyond current rows, does nothing and returns False.
+        Returns True if updated, else False.
+        """
+        try:
+            csv_path = self.current_csv_path
+            if not os.path.exists(csv_path):
+                return False
+            rows: list[list[str]] = []
+            with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+                rows = list(csv.reader(f))
+            if index_1based < 1 or index_1based > len(rows):
+                return False
+            old_row = rows[index_1based - 1]
+            seq_val = None
+            if keep_seq is not None:
+                seq_val = keep_seq
+            else:
+                try:
+                    seq_val = int(old_row[-1])
+                except Exception:
+                    seq_val = index_1based  # フォールバック
+            rows[index_1based - 1] = [key_value, placeholder_text, seq_val]
+            with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerows(rows)
+            self.log_message(f"CSV更新: {csv_path} の {index_1based} 行目を書き換え")
+            return True
+        except Exception as e:
+            self.log_message(f"CSV更新エラー(update_csv_row_by_index): {e}")
+            return False
+
+    def on_save_enter(self, event=None):
+        """Enter on Save: perform save, go to next PDF, and focus Entry."""
+        try:
+            self.on_save_click()
+            # 次のPDFへ
+            try:
+                self.next_pdf()
+            except Exception:
+                pass
+            # Entryへフォーカス
+            try:
+                self.id_entry.focus_set()
+                self.id_entry.icursor(tk.END)
+            except Exception:
+                pass
+        except Exception:
+            # 例外時もEntryへ
+            try:
+                self.id_entry.focus_set()
+            except Exception:
+                pass
+        return 'break'
     
     def on_close(self):
         """Save config on exit and close the app"""
@@ -471,6 +791,44 @@ class PDFRenamerApp:
             current_file = self.pdf_files[self.current_pdf_index]
             info_text = f"{current_file} ({self.current_pdf_index + 1}/{len(self.pdf_files)})"
             self.file_info_label.config(text=info_text)
+            # Prevボタンは1ページ目では無効化
+            try:
+                if self.current_pdf_index == 0:
+                    self.prev_button.state(['disabled'])
+                else:
+                    self.prev_button.state(['!disabled'])
+            except Exception:
+                try:
+                    self.prev_button.configure(state='disabled' if self.current_pdf_index == 0 else 'normal')
+                except Exception:
+                    pass
+            # Nextボタンは「次ページが未保存(=CSVに行が無い)」または「最終ページ」で無効化
+            try:
+                if self.current_pdf_index >= len(self.pdf_files) - 1:
+                    # 最終ページ
+                    self.next_button.state(['disabled'])
+                else:
+                    next_page_no = self.current_pdf_index + 2  # 1始まり
+                    has_row = False
+                    try:
+                        row = self.get_csv_row_by_index(next_page_no)
+                        has_row = bool(row)
+                    except Exception:
+                        has_row = False
+                    if has_row:
+                        self.next_button.state(['!disabled'])
+                    else:
+                        self.next_button.state(['disabled'])
+            except Exception:
+                try:
+                    if self.current_pdf_index >= len(self.pdf_files) - 1:
+                        self.next_button.configure(state='disabled')
+                    else:
+                        next_page_no = self.current_pdf_index + 2
+                        row = self.get_csv_row_by_index(next_page_no)
+                        self.next_button.configure(state='normal' if row else 'disabled')
+                except Exception:
+                    pass
     
     def extract_ocr_text(self):
         """Extract text from OCR area"""
@@ -748,12 +1106,53 @@ class PDFRenamerApp:
         if self.pdf_files and self.current_pdf_index > 0:
             self.current_pdf_index -= 1
             self.load_current_pdf()
+            # 前ページのページ番号（1始まり）に対応するCSV行をフォームへ反映
+            try:
+                page_no = self.current_pdf_index + 1
+                row = self.get_csv_row_by_index(page_no)
+                if row:
+                    # row: [value] or [value, placeholder] or [value, placeholder, seq]
+                    value = row[0] if len(row) >= 1 else ""
+                    placeholder = row[1] if len(row) >= 2 else ""
+                    # 反映
+                    if hasattr(self, 'entry_var'):
+                        self.entry_var.set(value)
+                    if hasattr(self, 'result_var') and self.result_var is not None:
+                        self.result_var.set(placeholder)
+                    # 保存ボタンの状態を更新
+                    try:
+                        self.update_save_button_state()
+                    except Exception:
+                        pass
+                else:
+                    self.log_message(f"CSVにページ{page_no}の行が見つかりません")
+            except Exception as e:
+                self.log_message(f"CSV参照エラー: {e}")
     
     def next_pdf(self):
         """Go to next PDF"""
         if self.pdf_files and self.current_pdf_index < len(self.pdf_files) - 1:
             self.current_pdf_index += 1
             self.load_current_pdf()
+            # 次ページのページ番号（1始まり）に対応するCSV行をフォームへ反映（prevと同様）
+            try:
+                page_no = self.current_pdf_index + 1
+                row = self.get_csv_row_by_index(page_no)
+                if row:
+                    value = row[0] if len(row) >= 1 else ""
+                    placeholder = row[1] if len(row) >= 2 else ""
+                    if hasattr(self, 'entry_var'):
+                        self.entry_var.set(value)
+                    if hasattr(self, 'result_var') and self.result_var is not None:
+                        self.result_var.set(placeholder)
+                    try:
+                        self.update_save_button_state()
+                    except Exception:
+                        pass
+                else:
+                    self.log_message(f"CSVにページ{page_no}の行が見つかりません")
+            except Exception as e:
+                self.log_message(f"CSV参照エラー: {e}")
         elif self.pdf_files and self.current_pdf_index == len(self.pdf_files) - 1:
             messagebox.showinfo("完了", "全てのPDFファイルの処理が完了しました")
     
