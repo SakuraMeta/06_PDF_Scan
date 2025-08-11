@@ -122,3 +122,26 @@ digit_length=8
   - UI実装（最大化、赤枠表示）
   - 高精度画像前処理
   - 動的範囲再設定機能
+
+- v1.1: CSV同期・ナビゲーション強化・ビルド
+  - 起動ごとに `log_output/YYYYMMDD_hhmmss.csv` を作成（セッション単位のCSV）
+  - 「<< 前へ」「次へ >>」でページ移動時、当該ページのCSV行（入力値・仮表示）をフォームに自動復元
+  - 次ページが未保存（CSV行なし）の場合は「次へ >>」ボタンを自動で無効化
+  - 保存時、同じページの既存CSV行があれば上書き更新（連番は維持）
+  - ファイル名変更時は `pdf_output` の旧PDFを削除して新しいPDFへ置換
+  - PyInstaller で exe ビルド（`dist/PDF_Renamer_Scan.exe`）
+
+## ビルド方法（開発者向け）
+
+```bash
+python -m pip install --upgrade pyinstaller
+python -m PyInstaller --noconfirm --onefile --windowed --name PDF_Renamer_Scan pdf_renamer.py
+```
+
+- 出力先: `dist/PDF_Renamer_Scan.exe`
+- 実行時の設定ファイルとフォルダはexeと同じディレクトリ基準で自動生成/参照されます（`config.txt`, `pdf_input/`, `pdf_output/`, `log_output/`, `ocr_get_image/`）。
+
+## 配布について
+
+- リポジトリに exe を含める場合はサイズに注意（GitHub推奨50MB未満。超える場合はReleasesやGit LFSの利用を検討）。
+- 推奨: GitHub Releases に `PDF_Renamer_Scan.exe` を添付して配布。
